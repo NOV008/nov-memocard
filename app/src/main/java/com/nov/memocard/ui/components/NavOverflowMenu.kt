@@ -27,6 +27,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -37,6 +38,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
@@ -54,6 +56,8 @@ private data class MenuAction(
     val enabled: Boolean,
     val onClick: () -> Unit,
     val dividerAfter: Boolean = false,
+    val showSwitch: Boolean = false,
+    val switchOn: Boolean = false,
 )
 
 @Composable
@@ -62,6 +66,10 @@ fun NavOverflowMenu(
     onNavigate: (String) -> Unit,
     onUndo: (() -> Unit)? = null,
     undoEnabled: Boolean = true,
+    handwriting: Boolean? = null,
+    onToggleHandwriting: (() -> Unit)? = null,
+    canClearInk: Boolean = false,
+    onClearInk: (() -> Unit)? = null,
 ) {
     var popupVisible by remember { mutableStateOf(false) }
     var expanded by remember { mutableStateOf(false) }
@@ -71,6 +79,22 @@ fun NavOverflowMenu(
     val actions = buildList {
         if (onUndo != null) {
             add(MenuAction("撤销", active = false, enabled = undoEnabled, onClick = onUndo, dividerAfter = true))
+        }
+        if (handwriting != null && onToggleHandwriting != null) {
+            add(
+                MenuAction(
+                    "手写",
+                    active = false,
+                    enabled = true,
+                    onClick = onToggleHandwriting,
+                    dividerAfter = !(handwriting && onClearInk != null),
+                    showSwitch = true,
+                    switchOn = handwriting,
+                ),
+            )
+        }
+        if (handwriting == true && onClearInk != null) {
+            add(MenuAction("清除手写", active = false, enabled = canClearInk, onClick = onClearInk, dividerAfter = true))
         }
         add(MenuAction("复习", Routes.REVIEW == current, true, { onNavigate(Routes.REVIEW) }))
         add(MenuAction("牌库", Routes.LIBRARY == current, true, { onNavigate(Routes.LIBRARY) }))
@@ -158,7 +182,14 @@ fun NavOverflowMenu(
                                             },
                                             fontWeight = if (action.active) FontWeight.SemiBold else FontWeight.Normal,
                                         )
-                                        if (action.active) {
+                                        if (action.showSwitch) {
+                                            Spacer(Modifier.weight(1f))
+                                            Switch(
+                                                checked = action.switchOn,
+                                                onCheckedChange = null,
+                                                modifier = Modifier.scale(0.8f),
+                                            )
+                                        } else if (action.active) {
                                             Spacer(Modifier.weight(1f))
                                             Icon(
                                                 Icons.Default.Check,

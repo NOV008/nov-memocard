@@ -9,6 +9,7 @@ import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.awaitEachGesture
@@ -25,7 +26,6 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -48,16 +48,25 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.StrokeJoin
+import androidx.compose.ui.graphics.drawscope.DrawScope
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalHapticFeedback
@@ -97,6 +106,24 @@ private fun liftCurve(p: Float): Float {
     return (1 - t) * cos(t * 1.5f * Math.PI.toFloat())
 }
 
+private fun DrawScope.drawCardShadow(alpha: Float) {
+    if (alpha <= 0.01f) return
+    val corner = 20.dp.toPx()
+    val steps = 12
+    val maxBleed = 10.dp.toPx()
+    val dy = 3.dp.toPx()
+    for (i in 0 until steps) {
+        val t = i / (steps - 1f)
+        val bleed = maxBleed * (1f - t)
+        drawRoundRect(
+            color = Color.Black.copy(alpha = (0.010f + 0.008f * t) * alpha),
+            topLeft = Offset(-bleed, -bleed + dy),
+            size = Size(size.width + bleed * 2f, size.height + bleed * 2f),
+            cornerRadius = CornerRadius(corner + bleed),
+        )
+    }
+}
+
 @Composable
 fun ReviewScreen(
     onNavigate: (String) -> Unit,
@@ -130,6 +157,12 @@ fun ReviewScreen(
     val backBmp = remember(current?.id, current?.backImage) {
         current?.backImage?.let { ImageStore.loadBitmap(context, it) }
     }
+
+    val handwriting = settings.handwriting
+    val frontInk = remember(current?.id) { mutableStateListOf<List<Offset>>() }
+    val backInk = remember(current?.id) { mutableStateListOf<List<Offset>>() }
+    val activeInk = remember(current?.id) { mutableStateListOf<Offset>() }
+    var activeInkFront by remember(current?.id) { mutableStateOf(true) }
 
     val progress = remember(current?.id) { Animatable(0f) }
     var flipBusy by remember(current?.id) { mutableStateOf(false) }
@@ -190,12 +223,14 @@ fun ReviewScreen(
             Modifier.fillMaxWidth().padding(top = 8.dp, bottom = 4.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Text(
-                "$index/${queue.size}",
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            Spacer(Modifier.width(8.dp))
+            Box(Modifier.width(96.dp)) {
+                Text(
+                    "$index/${queue.size}",
+                    modifier = Modifier.align(Alignment.CenterStart),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
             Column(
                 Modifier.weight(1f),
                 horizontalAlignment = Alignment.CenterHorizontally,
@@ -214,70 +249,83 @@ fun ReviewScreen(
                     overflow = TextOverflow.Ellipsis,
                 )
             }
-            Box {
-                IconButton(onClick = { showDeckMenu = true }) {
-                    Icon(Icons.Default.ArrowDropDown, contentDescription = "切换牌组")
-                }
-                DropdownMenu(
-                    expanded = showDeckMenu,
-                    onDismissRequest = { showDeckMenu = false },
-                    shape = RoundedCornerShape(16.dp),
-                    containerColor = MaterialTheme.colorScheme.surface,
-                    tonalElevation = 0.dp,
-                    shadowElevation = 10.dp,
-                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
-                ) {
-                    decks.forEach { d ->
-                        val active = d.id == selectedId
-                        DropdownMenuItem(
-                            text = {
-                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                    Box(
-                                        Modifier.size(30.dp).clip(RoundedCornerShape(10.dp))
-                                            .background(
-                                                if (active) MaterialTheme.colorScheme.primary
-                                                else MaterialTheme.colorScheme.surfaceVariant,
-                                            ),
-                                        contentAlignment = Alignment.Center,
-                                    ) {
+            Row(
+                Modifier.width(96.dp),
+                horizontalArrangement = Arrangement.End,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Box {
+                    IconButton(onClick = { showDeckMenu = true }) {
+                        Icon(Icons.Default.ArrowDropDown, contentDescription = "切换牌组")
+                    }
+                    DropdownMenu(
+                        expanded = showDeckMenu,
+                        onDismissRequest = { showDeckMenu = false },
+                        shape = RoundedCornerShape(16.dp),
+                        containerColor = MaterialTheme.colorScheme.surface,
+                        tonalElevation = 0.dp,
+                        shadowElevation = 10.dp,
+                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+                    ) {
+                        decks.forEach { d ->
+                            val active = d.id == selectedId
+                            DropdownMenuItem(
+                                text = {
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        Box(
+                                            Modifier.size(30.dp).clip(RoundedCornerShape(10.dp))
+                                                .background(
+                                                    if (active) MaterialTheme.colorScheme.primary
+                                                    else MaterialTheme.colorScheme.surfaceVariant,
+                                                ),
+                                            contentAlignment = Alignment.Center,
+                                        ) {
+                                            Text(
+                                                d.name.take(1),
+                                                color = if (active) Color.White else MaterialTheme.colorScheme.onSurfaceVariant,
+                                                style = MaterialTheme.typography.labelLarge,
+                                                fontWeight = FontWeight.SemiBold,
+                                            )
+                                        }
+                                        Spacer(Modifier.width(10.dp))
                                         Text(
-                                            d.name.take(1),
-                                            color = if (active) Color.White else MaterialTheme.colorScheme.onSurfaceVariant,
-                                            style = MaterialTheme.typography.labelLarge,
-                                            fontWeight = FontWeight.SemiBold,
+                                            d.name,
+                                            style = MaterialTheme.typography.bodyLarge,
+                                            color = if (active) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
+                                            fontWeight = if (active) FontWeight.SemiBold else FontWeight.Normal,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis,
                                         )
+                                        if (active) {
+                                            Spacer(Modifier.width(8.dp))
+                                            Icon(
+                                                Icons.Default.Check,
+                                                contentDescription = null,
+                                                tint = MaterialTheme.colorScheme.primary,
+                                                modifier = Modifier.size(16.dp),
+                                            )
+                                        }
                                     }
-                                    Spacer(Modifier.width(10.dp))
-                                    Text(
-                                        d.name,
-                                        style = MaterialTheme.typography.bodyLarge,
-                                        color = if (active) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
-                                        fontWeight = if (active) FontWeight.SemiBold else FontWeight.Normal,
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis,
-                                    )
-                                    if (active) {
-                                        Spacer(Modifier.width(8.dp))
-                                        Icon(
-                                            Icons.Default.Check,
-                                            contentDescription = null,
-                                            tint = MaterialTheme.colorScheme.primary,
-                                            modifier = Modifier.size(16.dp),
-                                        )
-                                    }
-                                }
-                            },
-                            onClick = { showDeckMenu = false; viewModel.setDeck(d.id) },
-                        )
+                                },
+                                onClick = { showDeckMenu = false; viewModel.setDeck(d.id) },
+                            )
+                        }
                     }
                 }
+                NavOverflowMenu(
+                    current = Routes.REVIEW,
+                    onNavigate = onNavigate,
+                    onUndo = { viewModel.undo() },
+                    undoEnabled = canUndo,
+                    handwriting = handwriting,
+                    onToggleHandwriting = { settings.updateHandwriting(!handwriting) },
+                    canClearInk = if (showFront) frontInk.isNotEmpty() else backInk.isNotEmpty(),
+                    onClearInk = {
+                        if (showFront) frontInk.clear() else backInk.clear()
+                        activeInk.clear()
+                    },
+                )
             }
-            NavOverflowMenu(
-                current = Routes.REVIEW,
-                onNavigate = onNavigate,
-                onUndo = { viewModel.undo() },
-                undoEnabled = canUndo,
-            )
         }
 
 
@@ -309,57 +357,111 @@ fun ReviewScreen(
                             scaleX = flipScale * pressScale
                             scaleY = flipScale * pressScale
                             translationY = -lift * 14.dp.toPx()
-                            shadowElevation = ((4f + 18f * lift.coerceAtLeast(0f)) * (1f - pressAmount.value.coerceIn(0f, 1f))).dp.toPx()
-                            shape = CardShape
-                            clip = true
-                            val a = (0.30f - 0.16f * lift.coerceAtLeast(0f)).coerceIn(0.08f, 0.4f)
-                            spotShadowColor = Color.Black.copy(alpha = a)
-                            ambientShadowColor = Color.Black.copy(alpha = a)
                         }
-                        .pointerInput(current?.id) {
+                        // 阴影与卡片一起做 3D 变换，旋转时不会错位露出灰色翻边
+                        .drawBehind {
+                            drawCardShadow((1f - 0.45f * lift) * (1f - pressAmount.value.coerceIn(0f, 1f)))
+                        }
+                        .clip(CardShape)
+                        .pointerInput(current?.id, handwriting) {
                             val touchSlop = viewConfiguration.touchSlop
-                            awaitEachGesture {
-                                val down = awaitFirstDown(requireUnconsumed = false)
-                                val pointerId = down.id
-                                pressed = true
-                                pressFx = (down.position.x / size.width).coerceIn(0f, 1f)
-                                pressFy = (down.position.y / size.height).coerceIn(0f, 1f)
-                                if (settings.vibration) {
-                                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                                }
+                            if (handwriting) {
+                                awaitEachGesture {
+                                    val down = awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
+                                    val pointerId = down.id
+                                    val faceIsFront = progress.value < 0.5f
+                                    val mirrored = !faceIsFront
+                                    fun toInk(p: Offset): Offset =
+                                        if (mirrored) Offset(size.width - p.x, p.y) else p
 
-                                var moved = false
-                                var canceled = false
-                                var released = false
+                                    activeInk.clear()
+                                    activeInkFront = faceIsFront
 
-                                while (!released && !canceled) {
-                                    val event = awaitPointerEvent()
-                                    val change = event.changes.firstOrNull { it.id == pointerId }
-                                    if (change == null) {
-                                        canceled = true
-                                        break
+                                    var moved = false
+                                    var released = false
+                                    var canceled = false
+                                    while (!released && !canceled) {
+                                        val event = awaitPointerEvent(PointerEventPass.Initial)
+                                        val change = event.changes.firstOrNull { it.id == pointerId }
+                                        if (change == null) {
+                                            canceled = true
+                                            break
+                                        }
+                                        if (change.pressed) {
+                                            val ink = toInk(change.position)
+                                            if (!moved && (change.position - down.position).getDistance() > touchSlop) {
+                                                moved = true
+                                                activeInk.add(toInk(down.position))
+                                                activeInk.add(ink)
+                                            } else if (moved && (ink - activeInk.last()).getDistance() > 1.5.dp.toPx()) {
+                                                activeInk.add(ink)
+                                            }
+                                        } else {
+                                            released = true
+                                        }
+                                        event.changes.forEach { it.consume() }
                                     }
-                                    if (change.isConsumed) moved = true
-                                    if (change.pressed) {
-                                        pressFx = (change.position.x / size.width).coerceIn(0f, 1f)
-                                        pressFy = (change.position.y / size.height).coerceIn(0f, 1f)
-                                        if ((change.position - down.position).getDistance() > touchSlop) {
-                                            moved = true
+
+                                    if (released && moved) {
+                                        (if (faceIsFront) frontInk else backInk).add(activeInk.toList())
+                                        activeInk.clear()
+                                    } else {
+                                        activeInk.clear()
+                                        if (released && !moved) {
+                                            if (settings.vibration) {
+                                                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                            }
+                                            if (!flipBusy) {
+                                                flipBusy = true
+                                                flipPending = true
+                                            }
                                         }
                                     }
-                                    if (change.previousPressed && !change.pressed) {
-                                        released = true
-                                    }
                                 }
-
-                                pressed = false
-                                if (released && !moved) {
+                            } else {
+                                awaitEachGesture {
+                                    val down = awaitFirstDown(requireUnconsumed = false)
+                                    val pointerId = down.id
+                                    pressed = true
+                                    pressFx = (down.position.x / size.width).coerceIn(0f, 1f)
+                                    pressFy = (down.position.y / size.height).coerceIn(0f, 1f)
                                     if (settings.vibration) {
                                         haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                                     }
-                                    if (!flipBusy) {
-                                        flipBusy = true
-                                        flipPending = true
+
+                                    var moved = false
+                                    var canceled = false
+                                    var released = false
+
+                                    while (!released && !canceled) {
+                                        val event = awaitPointerEvent()
+                                        val change = event.changes.firstOrNull { it.id == pointerId }
+                                        if (change == null) {
+                                            canceled = true
+                                            break
+                                        }
+                                        if (change.isConsumed) moved = true
+                                        if (change.pressed) {
+                                            pressFx = (change.position.x / size.width).coerceIn(0f, 1f)
+                                            pressFy = (change.position.y / size.height).coerceIn(0f, 1f)
+                                            if ((change.position - down.position).getDistance() > touchSlop) {
+                                                moved = true
+                                            }
+                                        }
+                                        if (change.previousPressed && !change.pressed) {
+                                            released = true
+                                        }
+                                    }
+
+                                    pressed = false
+                                    if (released && !moved) {
+                                        if (settings.vibration) {
+                                            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                        }
+                                        if (!flipBusy) {
+                                            flipBusy = true
+                                            flipPending = true
+                                        }
                                     }
                                 }
                             }
@@ -390,7 +492,7 @@ fun ReviewScreen(
                                     )
                                 }
                                 Text(
-                                    "点按卡片翻面",
+                                    if (handwriting) "手写中 · 点按翻面" else "点按卡片翻面",
                                     modifier = Modifier.align(Alignment.BottomCenter),
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -423,6 +525,15 @@ fun ReviewScreen(
                             }
                         }
                     }
+                    if (handwriting) {
+                        InkLayer(
+                            front = showFront,
+                            strokes = if (showFront) frontInk else backInk,
+                            active = activeInk,
+                            activeFront = activeInkFront,
+                            color = MaterialTheme.colorScheme.primary,
+                        )
+                    }
                 }
             }
         }
@@ -439,6 +550,39 @@ fun ReviewScreen(
             }
         }
     }
+}
+
+@Composable
+private fun InkLayer(
+    front: Boolean,
+    strokes: List<List<Offset>>,
+    active: List<Offset>,
+    activeFront: Boolean,
+    color: Color,
+) {
+    Canvas(
+        Modifier.fillMaxSize().graphicsLayer { rotationY = if (front) 0f else 180f },
+    ) {
+        val stroke = Stroke(width = 2.5.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round)
+        strokes.forEach { drawInkStroke(it, color, stroke) }
+        if (active.isNotEmpty() && activeFront == front) {
+            drawInkStroke(active, color, stroke)
+        }
+    }
+}
+
+private fun DrawScope.drawInkStroke(points: List<Offset>, color: Color, stroke: Stroke) {
+    if (points.isEmpty()) return
+    if (points.size == 1) {
+        drawCircle(color = color, radius = stroke.width / 2f, center = points[0])
+        return
+    }
+    val path = Path()
+    path.moveTo(points[0].x, points[0].y)
+    for (i in 1 until points.size) {
+        path.lineTo(points[i].x, points[i].y)
+    }
+    drawPath(path, color, style = stroke)
 }
 
 @Composable

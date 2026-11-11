@@ -22,6 +22,8 @@ class SettingsStore(context: Context) {
         private set
     var reviewDeckId by mutableStateOf(prefs.getLong("review_deck", 0L))
         private set
+    var handwriting by mutableStateOf(prefs.getBoolean("handwriting", false))
+        private set
 
     fun updateThemeMode(v: Int) {
         themeMode = v; prefs.edit().putInt("theme_mode", v).apply()
@@ -49,5 +51,9 @@ class SettingsStore(context: Context) {
 
     fun setReviewDeck(id: Long) {
         reviewDeckId = id; prefs.edit().putLong("review_deck", id).apply()
+    }
+
+    fun updateHandwriting(v: Boolean) {
+        handwriting = v; prefs.edit().putBoolean("handwriting", v).apply()
     }
 }
